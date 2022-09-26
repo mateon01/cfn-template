@@ -46,6 +46,14 @@ VpcName - 생성될 VPC의 Name입니다.
 
 ## 2. VPC FlowLog
 
+VPC flow log는 VPC 트워크에서 전송되고 수신되는 IP 트래픽에 대한 정보를 수집할 수 있는 기능입니다. 플로우 로그 데이터를 Amazon CloudWatch Logs 및 Amazon S3, KDF 로 수집할 수 있습니다. 플로우 로그를 생성한 다음 선택된 대상의 데이터를 가져와 확인할 수 있습니다.
+
+VPC flow log는 다음과 같은 여러 작업에 도움이 될 수 있습니다.
+
+- 보안 그룹 규칙에 대한 진단
+- 인스턴스에 도달하는 트래픽 모니터링
+- 네트워크 인터페이스를 오가는 트래픽에 대한 분석
+
 VPC FlowLog 활성화방안
 
 - CloudWatch Logs를 Target으로 하는 경우 사전에 Log Group과 IAM Role 생성이 필요합니다.
@@ -157,7 +165,7 @@ Logs Insights를 클릭합니다.
 
 `@message`를 그대로 사용하면 검색이 어려울 수 있습니다. `parse`문을 이용하여 `@message`의 컬럼을 분리하여 정규화 할 수 있습니다.
 
-```json
+```
 fields @timestamp
 | parse @message "* * * * * * * * * * * * * * * * * * * * * * * * * * * * *" as account_id, action, az_id, bytes, dstaddr, dstport, end, flow_direction, instance_id, interface_id, log_status, packets, pkt_dst_aws_service, pkt_dstaddr, pkt_src_aws_service, pkt_srcaddr, protocol, region, srcaddr, srcport, start, sublocation_id, sublocation_type, subnet_id, tcp_flags, traffic_path, type, version, vpc_id
 | sort @timestamp desc
@@ -166,7 +174,7 @@ fields @timestamp
 
 Source와 Destination IP주소 쌍 네트워크의 트레픽을 요약할 수 있습니다.
 
-```json
+```
 fields @timestamp
 | parse @message "* * * * * * * * * * * * * * * * * * * * * * * * * * * * *" as account_id, action, az_id, bytes, dstaddr, dstport, end, flow_direction, instance_id, interface_id, log_status, packets, pkt_dst_aws_service, pkt_dstaddr, pkt_src_aws_service, pkt_srcaddr, protocol, region, srcaddr, srcport, start, sublocation_id, sublocation_type, subnet_id, tcp_flags, traffic_path, type, version, vpc_id
 | stats sum(bytes) as Data_Transferred by srcaddr, dstaddr, flow_direction
@@ -176,7 +184,7 @@ fields @timestamp
 
 Instance ID별로 분리하여 데이터 통계를 얻을수 있습니다
 
-```json
+```
 fields @timestamp
 | parse @message "* * * * * * * * * * * * * * * * * * * * * * * * * * * * *" as account_id, action, az_id, bytes, dstaddr, dstport, end, flow_direction, instance_id, interface_id, log_status, packets, pkt_dst_aws_service, pkt_dstaddr, pkt_src_aws_service, pkt_srcaddr, protocol, region, srcaddr, srcport, start, sublocation_id, sublocation_type, subnet_id, tcp_flags, traffic_path, type, version, vpc_id
 | stats sum(bytes) as Data_Transferred by instance_id
@@ -186,7 +194,7 @@ fields @timestamp
 
 거부된 SSH접근 요청 내역을 요약하여 확인할 수 있습니다.
 
-```json
+```
 fields @timestamp
 | parse @message "* * * * * * * * * * * * * * * * * * * * * * * * * * * * *" as account_id, action, az_id, bytes, dstaddr, dstport, end, flow_direction, instance_id, interface_id, log_status, packets, pkt_dst_aws_service, pkt_dstaddr, pkt_src_aws_service, pkt_srcaddr, protocol, region, srcaddr, srcport, start, sublocation_id, sublocation_type, subnet_id, tcp_flags, traffic_path, type, version, vpc_id
 | filter action = "REJECT" and protocol = 6 and dstport = 22
@@ -197,7 +205,7 @@ fields @timestamp
 
 또는 모든 트래픽중 요청이 거부된 내역이 있는 IP를 찾을 수 있습니다.
 
-```json
+```
 fields @timestamp
 | parse @message "* * * * * * * * * * * * * * * * * * * * * * * * * * * * *" as account_id, action, az_id, bytes, dstaddr, dstport, end, flow_direction, instance_id, interface_id, log_status, packets, pkt_dst_aws_service, pkt_dstaddr, pkt_src_aws_service, pkt_srcaddr, protocol, region, srcaddr, srcport, start, sublocation_id, sublocation_type, subnet_id, tcp_flags, traffic_path, type, version, vpc_id
 | filter action="REJECT" 
@@ -207,7 +215,21 @@ fields @timestamp
 
 ## 4. Traffic Mirror Setting
 
-사전에 생성한 EC2의 암호를 먼저 찾아야 합니다. EC2 Dashboard로 돌아가서 Windows Instance를 선택합니다.
+Transit Gateway Network Manager와 VPC Flow log는 모두 Layer1 ~ Layer4 까지의 가시성을 제공하고 있습니다. VPC를 여러개 구성하거나, 내부의 EC2 ENI로 송수신 되는 Low Data를 분석해서 상세한 분석을 원하는 경우에는 TVPC Traffic Mirroring 기능을 사용해야 합니다.
+
+VPC Traffic Mirroring 기능은 이러한 요구사항을 완벽하게 지원하고 있습니다.
+
+![Untitled](VPC%20FlowLog&Traffic%20Mirror%20Workshop%20c83c70c0123840a5a818d5c3e8c6dc60/5.5.1.traffic_mirror.png)
+
+트래픽을 복사하는 Source와 복사한 목적지가 되는 Target의 2가지 요소가 합쳐져서 하나의 세션으로 이뤄집니다. 이 세션은 VXLAN으로 Tunneling 되어 Copy가 이뤄지기 때문에 Encapsulation 됩니다.
+
+<aside>
+💡 TCP dupm, tshark 등의 일반적인 분석 도구에서는 본 Workshop에서 사용하는 Wireshark 처럼 볼 수 없습니다. 그 이유는 VXLAN으로 Encapsulation 되어 있기 때문입니다. Decoding 할 수 있는 filter가 탑재된 솔루션들이 VXLAN을 Decoding 할 수 있습니다.
+따라서 만약 Target을 3rd Party Solution을 직접 연결한다면, 반드시 해당 솔루션은 VXLAN Decoding을 할 수 있어야 합니다.
+
+</aside>
+
+우선 사전에 생성한 EC2의 암호를 먼저 찾아야 합니다. EC2 Dashboard로 돌아가서 Windows Instance를 선택합니다.
 
 ![Screen Shot 2022-09-26 at 9.38.22 PM.png](VPC%20FlowLog&Traffic%20Mirror%20Workshop%20c83c70c0123840a5a818d5c3e8c6dc60/Screen_Shot_2022-09-26_at_9.38.22_PM.png)
 
